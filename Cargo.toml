@@ -9,6 +9,7 @@ description = "A remote control software."
 [features]
 inline = []
 cli = []
+dyndll = []
 use_samplerate = ["samplerate"]
 use_rubato = ["rubato"]
 use_dasp = ["dasp"]

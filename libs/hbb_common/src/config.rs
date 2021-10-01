@@ -287,11 +287,13 @@ impl Config {
             std::fs::create_dir_all(&path).ok();
             return path;
         }
+		#[cfg(not(target_os = "linux"))]
         if let Some(path) = Self::path("").parent() {
             let mut path: PathBuf = path.into();
             path.push("log");
             return path;
         }
+		#[cfg(not(target_os = "linux"))]
         "".into()
     }
 

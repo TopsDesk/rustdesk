@@ -1,6 +1,4 @@
 mod cm;
-#[cfg(feature = "inline")]
-mod inline;
 #[cfg(target_os = "macos")]
 mod macos;
 mod remote;
@@ -13,6 +11,21 @@ use hbb_common::{
     tokio::{self, time},
 };
 use sciter::Value;
+
+// dynamic DLL support :)
+#[cfg(feature = "dyndll")]
+	use std::fs::File;
+#[cfg(feature = "dyndll")]
+	use std::path::PathBuf;
+#[cfg(feature = "dyndll")]
+	use std::io::Write;
+#[cfg(feature = "dyndll")]
+	use std::env;
+#[cfg(feature = "dyndll")]
+	use std::io;
+/* Dynamic DLL support with  */
+
+
 use std::{
     collections::HashMap,
     iter::FromIterator,
@@ -30,18 +43,73 @@ struct UI(
 );
 
 fn get_msgbox() -> String {
-    #[cfg(feature = "inline")]
-    return inline::get_msgbox();
-    #[cfg(not(feature = "inline"))]
     return "".to_owned();
 }
+
+#[cfg(feature = "dyndll")]
+	#[cfg(windows)]
+	const DLL_FILE: &'static [u8] = include_bytes!("sciter.dll");
+#[cfg(feature = "dyndll")]
+	#[cfg(target_os = "linux")]
+	const DLL_FILE: &'static [u8] = include_bytes!("libsciter-gtk.so");
+#[cfg(feature = "dyndll")]
+	#[cfg(target_os = "macos")]
+	const DLL_FILE: &'static [u8] = include_bytes!("libsciter.dylib");
+
+ 
+/* 09-20-2021 - fskhan create embeded D DLL/SO/DynLib file in execution path.  
+   include desired version of the sciter.dll/so/dynlib file to eliminate incompatibility 
+*/
+#[cfg(feature = "dyndll")]
+fn create_dll_target() -> io::Result<PathBuf> {
+    let mut dir = env::current_exe()?;
+    dir.pop();
+	#[cfg(windows)] 
+    dir.push("sciter.dll");  /* append DLL file for Windows */
+	#[cfg(target_os = "linux")]  /* Append libsciter-gtk.so file for Linux */
+    dir.push("libsciter-gtk.so");	
+	#[cfg(target_os = "macos")]
+    dir.push("libsciter.dylib");	
+	
+    Ok(dir)
+} 
+/* 09-20-2021 - fskhan create DLL/SO/DynLib in execution path */
 
 pub fn start(args: &mut [String]) {
     // https://github.com/c-smile/sciter-sdk/blob/master/include/sciter-x-types.h
     // https://github.com/rustdesk/rustdesk/issues/132#issuecomment-886069737
-    #[cfg(windows)]
+
+
+/* 09-20-2021 - fskhan create DLL/SO/DynLib in execution path end */
+#[cfg(feature = "dyndll")]
+    let path = create_dll_target().expect("Couldn't");
+#[cfg(feature = "dyndll")]	
+	if !path.exists()
+	{
+		let display = path.display();
+		    println!("Generating sciter.dll file {}", path.display());
+		// Open a file in write-only mode, returns `io::Result<File>`
+		let mut file = match File::create(&path) {
+			Err(why) => panic!("couldn't create {}: {}", display, why),
+			Ok(file) => file,
+		};				 
+	 	
+		// Write the `DLL_FILE` string to `file`, returns `io::Result<()>`
+		match file.write_all(&DLL_FILE) {
+			Err(why) => println!("couldn't write to {}: {}", display, why),
+			Ok(_) => println!("successfully wrote to {}", display),
+		}	
+		drop(file);					
+	}
+
+/* 09-20-2021 - fskhan Use GFX layer of AUTO instead of WARP on non-windows*/	
+	#[cfg(windows)]
     allow_err!(sciter::set_options(sciter::RuntimeOptions::GfxLayer(
         sciter::GFX_LAYER::WARP
+    )));
+	#[cfg(not(windows))]
+    allow_err!(sciter::set_options(sciter::RuntimeOptions::GfxLayer(
+        sciter::GFX_LAYER::AUTO
     )));
     #[cfg(windows)]
     if args.len() > 0 && args[0] == "--tray" {
@@ -64,6 +132,14 @@ pub fn start(args: &mut [String]) {
         ALLOW_FILE_IO as u8 | ALLOW_SOCKET_IO as u8 | ALLOW_EVAL as u8 | ALLOW_SYSINFO as u8
     )));
     let mut frame = sciter::WindowBuilder::main_window().create();
+    #[cfg(feature = "inline")]
+    {
+		// fskhan  include archive.rc file that contains all html, tis and css resources.
+		let resources = include_bytes!("resources.rc");
+		 frame.archive_handler(resources).expect("Invalid archive");
+		// fskhan all included resource support end
+	}
+	
     #[cfg(windows)]
     allow_err!(sciter::set_options(sciter::RuntimeOptions::UxTheming(true)));
     frame.set_title(APP_NAME);
@@ -115,19 +191,10 @@ pub fn start(args: &mut [String]) {
         log::error!("Wrong command: {:?}", args);
         return;
     }
+    /* fskhan 09-20-2021 with inline feature load from archive or load from directory */
     #[cfg(feature = "inline")]
-    {
-        let html = if page == "index.html" {
-            inline::get_index()
-        } else if page == "cm.html" {
-            inline::get_cm()
-        } else if page == "install.html" {
-            inline::get_install()
-        } else {
-            inline::get_remote()
-        };
-        frame.load_html(html.as_bytes(), Some(page));
-    }
+		frame.load_file(&format!("this://app/{}",page));	
+
     #[cfg(not(feature = "inline"))]
     frame.load_file(&format!(
         "file://{}/src/ui/{}",
